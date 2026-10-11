@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Min Skolkalender</title>
+  <!-- Tailwind CSS för modern design -->
+  <script src="https://jsdelivr.net"></script>
+  <!-- Bibliotek för att tolka iCal/ics-filer -->
+  <script src="https://cloudflare.com"></script>
+  <style>
+    /* PWA-styling för att dölja webbläsargränssnitt vid hemskärmsstart */
+    body { -webkit-tap-highlight-color: transparent; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans min-h-screen flex flex-col">
+
+  <!-- Navigeringsmeny (Toppen) -->
+  <nav class="bg-blue-600 text-white shadow-md sticky top-0 z-50">
+    <div class="flex max-w-md mx-auto">
+      <button onclick="switchPage('calendar-page')" id="btn-calendar" class="flex-1 py-4 text-center font-bold border-b-4 border-white bg-blue-700 transition">
+        🗓️ Mina Händelser
+      </button>
+      <button onclick="switchPage('school-page')" id="btn-school" class="flex-1 py-4 text-center font-bold border-b-4 border-transparent opacity-80 hover:opacity-100 transition">
+        🏫 Skolsida
+      </button>
+    </div>
+  </nav>
+
+  <!-- HUVUDINNEHÅLL (Maxbredd anpassad för mobiler) -->
+  <main class="flex-1 max-w-md w-full mx-auto p-4 pb-24">
+    
+    <!-- SIDA 1: EGEN KALENDER -->
+    <div id="calendar-page" class="space-y-4">
+      <div class="flex justify-between items-center bg-white p-3 rounded-xl shadow-xs">
+        <button onclick="changeMonth(-1)" class="p-2 text-blue-600 font-bold text-lg">◀</button>
+        <h2 id="month-title" class="text-xl font-bold capitalize text-gray-700"></h2>
+        <button onclick="changeMonth(1)" class="p-2 text-blue-600 font-bold text-lg">▶</button>
+      </div>
+
+      <!-- Kalender-rutnät -->
+      <div class="bg-white p-3 rounded-xl shadow-xs">
+        <div class="grid grid-columns-7 gap-1 text-center font-semibold text-xs text-gray-500 mb-2">
+          <div>Mån</div><div>Tis</div><div>Ons</div><div>Tor</div><div>Fre</div><div>Lör</div><div>Sön</div>
+        </div>
+        <div id="calendar-days" class="grid grid-columns-7 gap-1"></div>
+      </div>
+
+      <!-- Lägg till egna saker (Tävling, Konsert, Prov) -->
+      <div class="bg-white p-4 rounded-xl shadow-xs space-y-3">
+        <h3 class="font-bold text-lg text-gray-700">Lägg till Händelse</h3>
+        <input type="date" id="event-date" class="w-full p-2.5 border rounded-lg bg-gray-50 text-sm">
+        <input type="text" id="event-title" placeholder="Tävling, prov, konsert..." class="w-full p-2.5 border rounded-lg bg-gray-50 text-sm">
+        <select id="event-color" class="w-full p-2.5 border rounded-lg bg-gray-50 text-sm">
+          <option value="#ef4444">🔴 Röd (Prov)</option>
+          <option value="#3b82f6">🔵 Blå (Tävling)</option>
+          <option value="#eab308">🟡 Gul (Konsert)</option>
+          <option value="#a855f7">🟣 Lila (Övrigt)</option>
+        </select>
+        <button onclick="addCustomEvent()" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-bold hover:bg-blue-700 transition">Spara i webbläsaren</button>
+      </div>
+
+      <!-- Detaljer för vald dag -->
+      <div id="day-details" class="bg-white p-4 rounded-xl shadow-xs hidden"></div>
+    </div>
+
+    <!-- SIDA 2: SKOLSIDA (iCal live-schema) -->
+    <div id="school-page" class="space-y-4 hidden">
+      <!-- Inställningar för länkar -->
+      <div class="bg-white p-4 rounded-xl shadow-xs space-y-3">
+        <h3 class="font-bold text-lg text-gray-700">Koppla iCal & Skola</h3>
+        <div>
+          <label class="text-xs font-semibold text-gray-500 block mb-1">Skola24 / It'slearning iCal-länk (.ics)</label>
+          <input type="text" id="ical-url" placeholder="https://.../schema.ics" class="w-full p-2 border rounded-lg text-xs">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-500 block mb-1">It'slearning Huvudlänk (för lektionsklick)</label>
+          <input type="text" id="itslearning-url" placeholder="https://itslearning.com" class="w-full p-2 border rounded-lg text-xs">
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-500 block mb-1">Länk till Skolmaten / Lunchmeny</label>
+          <input type="text" id="lunch-url" placeholder="https://skolmaten.se" class="w-full p-2 border rounded-lg text-xs">
+        </div>
+        <button onclick="saveSchoolSettings()" class="w-full bg-green-600 text-white py-2 rounded-lg font-bold text-sm hover:bg-green-700 transition">Ladda & Spara inställningar</button>
+      </div>
+
+      <!-- Live-schema behållare -->
+      <div class="bg-white p-4 rounded-xl shadow-xs">
+        <h3 class="font-bold text-lg text-gray-700 mb-3 flex justify-between items-center">
+          <span>Dagens Live-schema</span>
+          <span id="school-date-label" class="text-xs font-normal text-gray-500"></span>
+        </h3>
+        <div id="schedule-container" class="space-y-2">
+          <p class="text-sm text-gray-500 italic">Lägg till din iCal-länk ovan för att se ditt schema.</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // Globala variabler och tillstånd
+    let currentDate = new Date();
+    let customEvents = JSON.parse(localStorage.getItem('my_custom_events')) || {};
+    let schoolSettings = JSON.parse(localStorage.getItem('my_school_settings')) || { ical: '', itslearning: '', lunch: '' };
+    let parsedLessons = [];
+
+    window.onload = function() {
+      // Fyll i sparade inställningar
+      document.getElementById('ical-url').value = schoolSettings.ical || '';
+      document.getElementById('itslearning-url').value = schoolSettings.itslearning || '';
+      document.getElementById('lunch-url').value = schoolSettings.lunch || '';
+      
+      renderCalendar();
+      if (schoolSettings.ical) {
+        fetchAndParseEvents();
+      }
+    };
+
+    function switchPage(pageId) {
+      document.getElementById('calendar-page').classList.add('hidden');
+      document.getElementById('school-page').classList.add('hidden');
+      document.getElementById('btn-calendar').className = "flex-1 py-4 text-center font-bold border-b-4 border-transparent opacity-80";
+      document.getElementById('btn-school').className = "flex-1 py-4 text-center font-bold border-b-4 border-transparent opacity-80";
+
+      document.getElementById(pageId).classList.remove('hidden');
+      if (pageId === 'calendar-page') {
+        document.getElementById('btn-calendar').className = "flex-1 py-4 text-center font-bold border-b-4 border-white bg-blue-700";
+        renderCalendar();
+      } else {
+        document.getElementById('btn-school').className = "flex-1 py-4 text-center font-bold border-b-4 border-white bg-blue-700";
+        renderLiveSchedule();
+      }
+    }
+
+    /* --- KALENDER-FUNKTIONER (SIDA 1) --- */
+    function renderCalendar() {
+      const grid = document.getElementById('calendar-days');
+      const title = document.getElementById('month-title');
+      grid.innerHTML = '';
+      
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      title.innerText = currentDate.toLocaleDateString('sv-SE', { month: 'long', year: 'numeric' });
+      
+      const firstDay = (new Date(year, month, 1).getDay() + 6) % 7;
+      const totalDays = new Date(year, month + 1, 0).getDate();
+      
+      for(let i = 0; i < firstDay; i++) {
+        grid.innerHTML += '<div></div>';
+      }
+      
+      for(let d = 1; d <= totalDays; d++) {
+        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const isToday = new Date().toDateString() === new Date(year, month, d).toDateString() ? 'ring-2 ring-blue-600 font-bold' : '';
+        
+        let dotsHtml = '<div class="flex justify-center gap-0.5 mt-1 flex-wrap">';
+        if (customEvents[dateStr]) {
+          customEvents[dateStr].forEach(ev => {
+            dotsHtml += `<span class="w-1.5 h-1.5 rounded-full" style="background-color:${ev.color}"></span>`;
+          });
+        }
+        dotsHtml += '</div>';
+        
+        grid.innerHTML += `
+          <button onclick="showDayDetails('${dateStr}')" class="bg-gray-50 hover:bg-gray-100 p-2 rounded-lg text-center flex flex-col justify-between min-h-[50px] transition ${isToday}">
+            <span class="text-sm">${d}</span>
+            ${dotsHtml}
+          </button>
+        `;
+      }
+    }
+
+    function changeMonth(dir) {
+      currentDate.setMonth(currentDate.getMonth() + dir);
+      renderCalendar();
+    }
+
+    function addCustomEvent() {
+      const date = document.getElementById('event-date').value;
+      const title = document.getElementById('event-title').value;
+      const color = document.getElementById('event-color').value;
+      
+      if(!date || !title) return alert('Vänligen fyll i både datum och händelsenamn!');
+      
+      if(!customEvents[date]) customEvents[date] = [];
+      customEvents[date].push({ title, color });
+      
+      localStorage.setItem('my_custom_events', JSON.stringify(customEvents));
+      renderCalendar();
+      showDayDetails(date);
+      document.getElementById('event-title').value = '';
+    }
+
+    function showDayDetails(dateStr) {
+      const el = document.getElementById('day-details');
+      el.classList.remove('hidden');
+      
+      let html = `<h4 class="font-bold text-sm text-gray-600 mb-2">Händelser för ${dateStr}:</h4>`;
+      let count = 0;
+
+      if (customEvents[dateStr] && customEvents[dateStr].length > 0) {
+        customEvents[dateStr].forEach(ev => {
+          html += `<div class="p-2 rounded-lg text-white text-xs font-semibold mb-1" style="background-color:${ev.color}">${ev.title}</div>`;
+          count++;
+        });
+      }
+      
+      if (count === 0) {
+        html += `<p class="text-xs text-gray-400 italic">Inga egna planerade händelser den här dagen.</p>`;
+      }
+      el.innerHTML = html;
+    }
+
